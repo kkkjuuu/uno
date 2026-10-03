@@ -105,11 +105,20 @@ function handleFx(f) {
     case 'catch':
       SFX.catch();
       if (f.auto) {
-        // Auto-penalty: forgot to press UNO in time
         toast(f.target === me ? '⏱️ หมดเวลากด UNO! จั่ว 2 ใบ' : to(f.target) + ' ลืมกด UNO! จั่ว 2 ใบ');
         if (f.target === me) vib([80, 50, 80, 50, 120]);
       } else {
         toast(to(f.by) + ' จับ ' + to(f.target) + ' ได้! จั่ว 2');
+      }
+      break;
+    case 'unoWin': SFX.win(); toast(to(f.by) + ' กด UNO WIN!'); break;
+    case 'catchWin':
+      SFX.catch();
+      if (f.auto) {
+        toast(f.target === me ? '⏱️ หมดเวลากด UNO WIN! จั่ว 2 ใบ' : to(f.target) + ' ลืมกด UNO WIN! จั่ว 2 ใบ');
+        if (f.target === me) vib([80, 50, 80, 50, 120]);
+      } else {
+        toast(to(f.by) + ' จับ ' + to(f.target) + ' ลืมกด UNO WIN! จั่ว 2');
       }
       break;
     case 'win': f.by === me ? SFX.win() : SFX.lose(); break;
@@ -336,8 +345,9 @@ function renderGame() {
       <div class="sn">${esc(p.name)}</div>
       <div class="sc">${p.rank ? 'จบแล้ว' : p.cards + ' ใบ'}${S.scoring === '500' ? ' · ' + p.score : ''}</div></div>`);
   }
-  const showUno = playing && !finished && ((S.hand.length === 2 && myTurn && !meP.uno) || g.vuln === me);
-  const showCatch = playing && !finished && g.vuln && g.vuln !== me;
+  const showUno = playing && !finished && ((S.hand.length === 2 && myTurn && !meP.uno) || g.vuln === me || g.vulnWin === me);
+  const showCatch = playing && !finished && ((g.vuln && g.vuln !== me) || (g.vulnWin && g.vulnWin !== me));
+  const isUnoWin = g.vulnWin === me;
   const hs = $('.hand'), sl = hs ? hs.scrollLeft : 0;
   $app.innerHTML = `<div class="game">
     <div class="banner ${cls}"><div class="bt">${!myTurn && !finished && !g.pending ? avatar(turnP.av, 30) : ''}<span class="bx">${esc(bn)}</span><b id="tsec"></b></div><div class="bar"><i id="tbar"></i></div></div>
@@ -351,17 +361,18 @@ function renderGame() {
     </div>
     <div class="actions">
       ${playing && meP.auto ? '<button class="btn yellow sm" id="back">กลับมาเล่น</button>' : ''}
-      ${myTurn && !g.pending && !g.drawn ? '<button class="btn yellow sm" id="draw">จั่วไพ่</button>' : ''}
-      ${myTurn && g.drawn ? '<button class="btn sm" id="pass">ผ่าน</button>' : ''}
-      ${myTurn && !g.pending && !g.drawn && (g.playsThisTurn || 0) > 0 ? '<button class="btn sm" id="endturn">จบตา</button>' : ''}
+      ${myTurn && !g.pending && !g.drawn && !isUnoWin ? '<button class="btn yellow sm" id="draw">จั่วไพ่</button>' : ''}
+      ${myTurn && g.drawn && !isUnoWin ? '<button class="btn sm" id="pass">ผ่าน</button>' : ''}
+      ${myTurn && !g.pending && !g.drawn && (g.playsThisTurn || 0) > 0 && !isUnoWin ? '<button class="btn sm" id="endturn">จบตา</button>' : ''}
       ${(() => {
         if (!showUno) return '';
-        const dl = g.vulnDeadline || 0;
+        const dl = isUnoWin ? (g.vulnWinDeadline || 0) : (g.vulnDeadline || 0);
         const left = dl > 0 ? Math.max(0, Math.ceil((dl - Date.now()) / 1000)) : 5;
         const urgent = left <= 2;
-        return `<button class="btn primary sm uno-btn${urgent ? ' uno-urgent' : ''}" id="uno">UNO! <span class="uno-cd" id="unocd">${dl > 0 ? left + 'วิ' : ''}</span></button>`;
+        const text = isUnoWin ? 'UNO WIN!' : 'UNO!';
+        return `<button class="btn primary sm uno-btn${urgent ? ' uno-urgent' : ''}" id="uno">${text} <span class="uno-cd" id="unocd">${dl > 0 ? left + 'วิ' : ''}</span></button>`;
       })()}
-      ${showCatch ? '<button class="btn primary sm" id="catch">จับ! ลืมร้อง UNO</button>' : ''}
+      ${showCatch ? '<button class="btn primary sm" id="catch">จับ! ลืมกด UNO' + (g.vulnWin ? ' WIN' : '') + '</button>' : ''}
     </div>
     <div class="mebar ${myTurn ? 'turn' : ''}"><div class="aw ${myTurn ? 't' : ''}">${avatar(meP.av, 38)}</div><div class="mn">${esc(meP.name)}</div><div class="sc">${meP.rank ? 'อันดับ ' + meP.rank : S.hand.length + ' ใบ'}${S.scoring === '500' ? ' · ' + meP.score + ' คะแนน' : ''}</div></div>
     <div class="hand">${S.hand.map((c) => cardEl(c, myTurn && !g.pending ? (playable.has(c.id) ? 'ok' : 'no') : '')).join('')}</div>
@@ -430,7 +441,7 @@ setInterval(() => {
   document.querySelectorAll('.aw.t').forEach((el) => el.style.setProperty('--p', pct * 3.6 + 'deg'));
 
   // UNO countdown
-  const vdl = S.game.vulnDeadline || 0;
+  const vdl = S.game.vulnWinDeadline || S.game.vulnDeadline || 0;
   if (vdl > 0) {
     const vleft = vdl - Date.now();
     const vsec = Math.max(0, Math.ceil(vleft / 1000));

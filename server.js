@@ -22,7 +22,26 @@ let cardSeq = 1;
 
 const rnd = (n) => Math.floor(Math.random() * n);
 const av = (a) => ({ c: Math.abs(((a && a.c) | 0)) % 8, s: Math.abs(((a && a.s) | 0)) % 6 });
-const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
+  // De-clumping: ทำให้การสุ่มกระจายตัวดีขึ้น ไม่กระจุกสีหรือเลขเดียวกัน
+  for (let i = 1; i < a.length - 1; i++) {
+    const p1 = a[i-1], p2 = i >= 2 ? a[i-2] : null, c = a[i];
+    let clump = (p2 && c.color !== 'wild' && c.color === p1.color && c.color === p2.color) ||
+                (c.type !== 'number' && c.type === p1.type) ||
+                (c.type === 'number' && p1.type === 'number' && c.value === p1.value);
+    if (clump) {
+      for (let k = i + 1; k < a.length; k++) {
+        const t = a[k];
+        if (!((p2 && t.color !== 'wild' && t.color === p1.color && t.color === p2.color) || (t.type !== 'number' && t.type === p1.type) || (t.type === 'number' && p1.type === 'number' && t.value === p1.value))) {
+          [a[i], a[k]] = [a[k], a[i]];
+          break;
+        }
+      }
+    }
+  }
+  return a;
+}
 const BOT_NAMES = ['น้องบอท', 'บอทใจดี', 'เจ้าหมีบอท', 'บอทสายฟ้า', 'พี่บอท', 'บอทเงียบ', 'บอทจอมโกง', 'ลุงบอท', 'บอทขี้เล่น', 'บอทน้อย'];
 
 function buildDeck(decks) {
@@ -45,7 +64,7 @@ function makeCode() {
 }
 function newRoom(hostId, hostName, scoring = 'single', avatar, isPublic = true, title, playLimit = 1) {
   const code = makeCode();
-  const room = { code, hostId, state: 'lobby', scoring, playLimit, isPublic, gameNo: 0, title: String(title || '').trim().slice(0, 24) || ('ห้องของ ' + (hostName || 'ผู้เล่น').slice(0, 14)), players: [], game: null, round: 0, timer: null, catchTimer: null, unoTimer: null, nextTimer: null, fx: null, fxSeq: 0, result: null, cleanup: null };
+  const room = { code, hostId, state: 'lobby', scoring, playLimit, isPublic, gameNo: 0, title: String(title || '').trim().slice(0, 24) || ('ห้องของ ' + (hostName || 'ผู้เล่น').slice(0, 14)), players: [], game: null, round: 0, timer: null, catchTimer: null, unoTimer: null, unoWinTimer: null, nextTimer: null, fx: null, fxSeq: 0, result: null, cleanup: null };
   rooms.set(code, room);
   addHuman(room, hostId, hostName, avatar);
   return room;
@@ -87,7 +106,7 @@ function drawCards(g, p, k) {
 function startRound(room) {
   clearTimeout(room.nextTimer);
   const n = room.players.length;
-  const g = { deck: buildDeck(n > 6 ? 2 : 1), discard: [], dir: 1, turn: 0, color: 'red', pending: null, drawn: null, vuln: null, vulnSeq: 0, vulnDeadline: 0, deadline: 0, done: new Set(), playsThisTurn: 0 };
+  const g = { deck: buildDeck(n > 6 ? 2 : 1), discard: [], dir: 1, turn: 0, color: 'red', pending: null, drawn: null, vuln: null, vulnSeq: 0, vulnDeadline: 0, vulnWin: null, vulnWinSeq: 0, vulnWinDeadline: 0, deadline: 0, done: new Set(), playsThisTurn: 0 };
   room.players.forEach((p) => { p.hand = []; p.uno = false; p.rank = null; p.skips = 0; p.auto = false; });
   room.players.forEach((p) => drawCards(g, p, 7));
   let first;
@@ -130,17 +149,26 @@ function play(room, idx, cardId, color) {
   if (p.hand.length > 1) p.uno = false;
   let finishing = false;
   if (p.hand.length === 0) {
-    if (room.scoring !== 'rank') {
-      const nx = step(g, n, idx);
-      if (card.type === 'draw2') drawCards(g, room.players[nx], 2);
-      if (card.type === 'wild4') drawCards(g, room.players[nx], 4);
-      fx(room, 'play', { by: p.id, card: card.type });
-      return endRound(room, idx);
-    }
     finishing = true;
-    p.rank = room.players.filter((x) => x.rank).length + 1;
     g.done.add(idx);
-    if (n - g.done.size <= 1) { fx(room, 'finish', { by: p.id, rank: p.rank }); return endRankGame(room); }
+    
+    if (p.bot) {
+      if (room.scoring !== 'rank') {
+        const nx = step(g, n, idx);
+        if (card.type === 'draw2') drawCards(g, room.players[nx], 2);
+        if (card.type === 'wild4') drawCards(g, room.players[nx], 4);
+        fx(room, 'play', { by: p.id, card: card.type });
+        return endRound(room, idx);
+      }
+      p.rank = room.players.filter((x) => x.rank).length + 1;
+      if (n - g.done.size <= 1) { fx(room, 'finish', { by: p.id, rank: p.rank }); return endRankGame(room); }
+    } else {
+      g.vulnWin = p.id;
+      g.vulnWinSeq = (g.vulnWinSeq || 0) + 1;
+      g.vulnWinDeadline = Date.now() + UNO_WINDOW_MS;
+      scheduleBotCatch(room, g.vulnWinSeq, true);
+      scheduleAutoUnoWin(room, p.id, g.vulnWinSeq);
+    }
   } else if (p.hand.length === 1 && !p.uno) {
     g.vuln = p.id; g.vulnSeq++;
     g.vulnDeadline = Date.now() + UNO_WINDOW_MS;
@@ -243,7 +271,26 @@ function respondWild4(room, idx, challenge) {
   return null;
 }
 function callUno(room, idx) {
-  const g = room.game, p = room.players[idx];
+  const g = room.game, p = room.players[idx], n = room.players.length;
+  
+  if (g.vulnWin === p.id) {
+    g.vulnWin = null;
+    g.vulnWinDeadline = 0;
+    clearTimeout(room.unoWinTimer);
+    clearTimeout(room.catchTimer);
+    fx(room, 'unoWin', { by: p.id });
+    
+    if (room.scoring !== 'rank') {
+      return endRound(room, idx);
+    } else {
+      p.rank = room.players.filter((x) => x.rank).length + 1;
+      if (n - g.done.size <= 1) { fx(room, 'finish', { by: p.id, rank: p.rank }); return endRankGame(room); }
+      fx(room, 'finish', { by: p.id, rank: p.rank });
+      tick(room, true);
+      return null;
+    }
+  }
+
   if (p.hand.length > 2 || (p.hand.length === 2 && g.turn !== idx)) return 'ยังเรียก UNO ไม่ได้';
   p.uno = true;
   if (g.vuln === p.id) {
@@ -258,6 +305,19 @@ function callUno(room, idx) {
 }
 function catchUno(room, idx) {
   const g = room.game;
+  
+  if (g.vulnWin && room.players[idx].id !== g.vulnWin) {
+    const t = room.players[pIdx(room, g.vulnWin)];
+    drawCards(g, t, 2);
+    g.done.delete(pIdx(room, t.id)); // Resume playing
+    g.vulnWin = null;
+    g.vulnWinDeadline = 0;
+    clearTimeout(room.unoWinTimer);
+    fx(room, 'catchWin', { by: room.players[idx].id, target: t.id, n: 2 });
+    tick(room, true);
+    return null;
+  }
+
   if (!g.vuln || room.players[idx].id === g.vuln) return 'ไม่มีใครให้จับ';
   const t = room.players[pIdx(room, g.vuln)];
   drawCards(g, t, 2);
@@ -268,16 +328,39 @@ function catchUno(room, idx) {
   tick(room, true);
   return null;
 }
-function scheduleBotCatch(room, seq) {
+function scheduleBotCatch(room, seq, isWin = false) {
   clearTimeout(room.catchTimer);
   const bots = room.players.filter((p) => p.bot);
   if (!bots.length) return;
   room.catchTimer = setTimeout(() => {
     const g = room.game;
-    if (!g || g.vulnSeq !== seq || !g.vuln) return;
-    const b = bots[rnd(bots.length)];
-    if (b.id !== g.vuln && Math.random() < 0.6) catchUno(room, pIdx(room, b.id));
+    if (!g) return;
+    if (isWin) {
+      if (g.vulnWinSeq !== seq || !g.vulnWin) return;
+      const b = bots[rnd(bots.length)];
+      if (b.id !== g.vulnWin && Math.random() < 0.6) catchUno(room, pIdx(room, b.id));
+    } else {
+      if (g.vulnSeq !== seq || !g.vuln) return;
+      const b = bots[rnd(bots.length)];
+      if (b.id !== g.vuln && Math.random() < 0.6) catchUno(room, pIdx(room, b.id));
+    }
   }, 1800 + rnd(1500));
+}
+function scheduleAutoUnoWin(room, vulnId, seq) {
+  clearTimeout(room.unoWinTimer);
+  room.unoWinTimer = setTimeout(() => {
+    const g = room.game;
+    if (!g || g.vulnWin !== vulnId || g.vulnWinSeq !== seq) return;
+    const t = room.players.find((p) => p.id === vulnId);
+    if (!t) return;
+    drawCards(g, t, 2);
+    g.done.delete(pIdx(room, t.id)); // Resume playing
+    g.vulnWin = null;
+    g.vulnWinDeadline = 0;
+    clearTimeout(room.catchTimer);
+    fx(room, 'catchWin', { by: null, target: t.id, n: 2, auto: true });
+    tick(room, true);
+  }, UNO_WINDOW_MS);
 }
 function scheduleAutoUno(room, vulnId, seq) {
   clearTimeout(room.unoTimer);
@@ -390,7 +473,7 @@ function view(room, id) {
     v.game = {
       top: top(g), color: g.color, dir: g.dir, turn: pl.id, deck: g.deck.length, deadline: g.deadline,
       pending: g.pending ? { from: room.players[g.pending.from].id, target: room.players[g.pending.target].id } : null,
-      drawn: g.drawn, vuln: g.vuln, vulnDeadline: g.vulnDeadline || 0, playsThisTurn: g.playsThisTurn || 0,
+      drawn: g.drawn, vuln: g.vuln, vulnDeadline: g.vulnDeadline || 0, vulnWin: g.vulnWin, vulnWinDeadline: g.vulnWinDeadline || 0, playsThisTurn: g.playsThisTurn || 0,
       playable: pl.id === id && !g.pending ? me.hand.filter((c) => (!g.drawn || g.drawn === c.id) && canPlay(c, g, me.hand.filter((x) => x.id !== c.id))).map((c) => c.id) : [],
     };
   }
@@ -419,7 +502,7 @@ function removePlayer(room, id) {
   if (room.state === 'playing') tick(room); else broadcast(room);
 }
 function destroyRoom(room) {
-  clearTimeout(room.timer); clearTimeout(room.catchTimer); clearTimeout(room.unoTimer); clearTimeout(room.nextTimer);
+  clearTimeout(room.timer); clearTimeout(room.catchTimer); clearTimeout(room.unoTimer); clearTimeout(room.unoWinTimer); clearTimeout(room.nextTimer);
   room.players.forEach((p) => where.delete(p.id));
   rooms.delete(room.code);
 }
