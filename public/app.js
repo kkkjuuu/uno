@@ -102,7 +102,16 @@ function handleFx(f) {
     case 'challengeWin': SFX.hit(); toast(to(f.by) + ' ท้าทายสำเร็จ! ' + to(f.target) + ' จั่ว 4'); break;
     case 'challengeLose': SFX.hit(); toast(to(f.by) + ' ท้าทายพลาด จั่ว 6 ใบ'); break;
     case 'uno': SFX.uno(); toast(to(f.by) + ' ร้อง UNO!'); break;
-    case 'catch': SFX.catch(); toast(to(f.by) + ' จับ ' + to(f.target) + ' ได้! จั่ว 2'); break;
+    case 'catch':
+      SFX.catch();
+      if (f.auto) {
+        // Auto-penalty: forgot to press UNO in time
+        toast(f.target === me ? '⏱️ หมดเวลากด UNO! จั่ว 2 ใบ' : to(f.target) + ' ลืมกด UNO! จั่ว 2 ใบ');
+        if (f.target === me) vib([80, 50, 80, 50, 120]);
+      } else {
+        toast(to(f.by) + ' จับ ' + to(f.target) + ' ได้! จั่ว 2');
+      }
+      break;
     case 'win': f.by === me ? SFX.win() : SFX.lose(); break;
     case 'timeout': SFX.skip(); toast(to(f.by) + ' หมดเวลา ถูกข้ามตา' + (f.auto ? ' (บอทเล่นแทน)' : '')); if (f.by === me) vib([80, 40, 80]); break;
     case 'finish': if (f.over) { SFX.win(); break; } f.by === me ? SFX.win() : SFX.wild(); toast(to(f.by) + ' จบเกม ได้อันดับที่ ' + f.rank); break;
@@ -319,7 +328,9 @@ function renderGame() {
   const seats = [];
   for (let k = 1; k < n; k++) {
     const p = S.players[(mi + k) % n], th = ((90 + (k * 360) / n) * Math.PI) / 180;
-    const x = 50 + 38 * Math.cos(th), y = 50 + 37 * Math.sin(th), turn = playing && g.turn === p.id;
+    // ขยับจุดศูนย์กลางขึ้น (Y=43) และทำวงรีให้แบนลงในแนวตั้ง (ry=32)
+    // เพื่อเว้นที่ว่างด้านล่างให้ปุ่มในมือถือ (แนวตั้ง)
+    const x = 50 + 40 * Math.cos(th), y = 43 + 32 * Math.sin(th), turn = playing && g.turn === p.id;
     seats.push(`<div class="seat ${turn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${p.rank ? 'done' : ''}" style="left:${x}%;top:${y}%">
       <div class="aw ${turn ? 't' : ''}">${avatar(p.av, small ? 34 : 42)}${p.rank ? `<i class="rk">${p.rank}</i>` : ''}${p.uno && p.cards === 1 ? '<i class="un">UNO</i>' : ''}</div>
       <div class="sn">${esc(p.name)}</div>
@@ -343,7 +354,13 @@ function renderGame() {
       ${myTurn && !g.pending && !g.drawn ? '<button class="btn yellow sm" id="draw">จั่วไพ่</button>' : ''}
       ${myTurn && g.drawn ? '<button class="btn sm" id="pass">ผ่าน</button>' : ''}
       ${myTurn && !g.pending && !g.drawn && (g.playsThisTurn || 0) > 0 ? '<button class="btn sm" id="endturn">จบตา</button>' : ''}
-      ${showUno ? '<button class="btn primary sm" id="uno">UNO!</button>' : ''}
+      ${(() => {
+        if (!showUno) return '';
+        const dl = g.vulnDeadline || 0;
+        const left = dl > 0 ? Math.max(0, Math.ceil((dl - Date.now()) / 1000)) : 5;
+        const urgent = left <= 2;
+        return `<button class="btn primary sm uno-btn${urgent ? ' uno-urgent' : ''}" id="uno">UNO! <span class="uno-cd" id="unocd">${dl > 0 ? left + 'วิ' : ''}</span></button>`;
+      })()}
       ${showCatch ? '<button class="btn primary sm" id="catch">จับ! ลืมร้อง UNO</button>' : ''}
     </div>
     <div class="mebar ${myTurn ? 'turn' : ''}"><div class="aw ${myTurn ? 't' : ''}">${avatar(meP.av, 38)}</div><div class="mn">${esc(meP.name)}</div><div class="sc">${meP.rank ? 'อันดับ ' + meP.rank : S.hand.length + ' ใบ'}${S.scoring === '500' ? ' · ' + meP.score + ' คะแนน' : ''}</div></div>
@@ -402,7 +419,7 @@ function render() {
   else renderGame();
 }
 
-// turn timer: banner bar, seconds, ring around the current player's avatar
+// turn timer + UNO countdown: update DOM every 150ms without full re-render
 setInterval(() => {
   if (!S || !S.game) return;
   const dl = S.game.deadline, left = dl - Date.now();
@@ -411,6 +428,19 @@ setInterval(() => {
   const bar = $('#tbar'); if (bar) bar.style.width = pct + '%';
   const sec = $('#tsec'); if (sec) sec.textContent = live ? Math.ceil(left / 1000) + ' วิ' : '';
   document.querySelectorAll('.aw.t').forEach((el) => el.style.setProperty('--p', pct * 3.6 + 'deg'));
+
+  // UNO countdown
+  const vdl = S.game.vulnDeadline || 0;
+  if (vdl > 0) {
+    const vleft = vdl - Date.now();
+    const vsec = Math.max(0, Math.ceil(vleft / 1000));
+    const cd = $('#unocd'); if (cd) cd.textContent = vsec + 'วิ';
+    const unoBtn = $('.uno-btn');
+    if (unoBtn) {
+      if (vsec <= 2) unoBtn.classList.add('uno-urgent');
+      else unoBtn.classList.remove('uno-urgent');
+    }
+  }
 }, 150);
 
 render();

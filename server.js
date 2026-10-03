@@ -10,7 +10,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_, res) => res.send('ok'));
 
 const COLORS = ['red', 'yellow', 'green', 'blue'];
-const TURN_MS = 15000;
+const TURN_MS = 20000;
 const QUEUE_WAIT_MS = 8000;
 const UNO_WINDOW_MS = 5000; // 5 seconds to press UNO before auto-penalty
 const rooms = new Map(); // code -> room
@@ -181,11 +181,14 @@ function play(room, idx, cardId, color) {
     fx(room, 'wild', { by: p.id, card: card.type });
   } else {
     // Normal number card — check multi-play limit
+    const wasDrawn = g.drawn === cardId;
     g.playsThisTurn = (g.playsThisTurn || 0) + 1;
-    const limit = room.playLimit || 1; // 0 = unlimited
+    const limit = room.playLimit !== undefined ? room.playLimit : 1; // fix the 0 || 1 bug
     const hasMore = p.hand.some((c) => canPlay(c, g, p.hand.filter((x) => x.id !== c.id)));
     const limitReached = limit > 0 && g.playsThisTurn >= limit;
-    if (!finishing && !limitReached && hasMore) {
+    
+    // If they just played a drawn card, their turn must end regardless of limit
+    if (!finishing && !wasDrawn && !limitReached && hasMore) {
       // Stay on this player's turn
       g.turn = idx;
     } else {
@@ -326,7 +329,11 @@ function timeoutSkip(room, idx) {
   g.vuln = null;
   if (g.pending) { respondWild4(room, idx, false); }
   else if (g.drawn) { pass(room, idx); }
-  else { g.turn = step(g, room.players.length, idx); tick(room, false, true); }
+  else {
+    g.playsThisTurn = 0;
+    g.turn = step(g, room.players.length, idx);
+    tick(room, false, true);
+  }
   fx(room, 'timeout', { by: p.id, auto: p.auto });
   broadcast(room);
 }
@@ -363,7 +370,7 @@ function tick(room, keepTimer) {
   clearTimeout(room.timer);
   const g = room.game;
   const idx = g.turn, p = room.players[idx];
-  const auto = p.bot || !p.connected || p.auto;
+  const auto = p.bot || p.auto; // Do not auto-play instantly if just disconnected (!p.connected), give them time to reconnect
   g.deadline = Date.now() + (auto ? 0 : TURN_MS);
   room.timer = setTimeout(() => (auto ? botAct(room, idx) : timeoutSkip(room, idx)), auto ? 900 + rnd(900) : TURN_MS);
   broadcast(room);
